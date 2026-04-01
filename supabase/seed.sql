@@ -39,6 +39,10 @@ values
   )
 on conflict (id) do nothing;
 
+select public.create_default_site_folders('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'System');
+select public.create_default_site_folders('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'System');
+select public.create_default_site_folders('cccccccc-cccc-cccc-cccc-cccccccccccc', 'System');
+
 insert into public.jobs (id, job_number, customer_id, site_id, title, job_type, stage, assignee_name, scheduled_for, value_gbp, summary)
 values
   (
@@ -166,6 +170,24 @@ values
     now() - interval '6 days'
   )
 on conflict (id) do nothing;
+
+insert into public.site_jobsheets (site_id, folder_id, site_visit_id, job_id, title, engineer_name, work_summary, materials_used, follow_up_required, follow_up_notes, client_name)
+select
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  folders.id,
+  '12121212-1212-1212-1212-121212121212',
+  'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  'Warehouse LED lighting upgrade',
+  'Dale',
+  'Installation layout reviewed and final row spacing confirmed.',
+  '8x LED fittings, 2x emergency packs, fixings',
+  true,
+  'Return visit needed for final commissioning after stock arrives.',
+  'Anna Roberts'
+from public.site_folders folders
+where folders.site_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  and folders.slug = 'jobsheets'
+on conflict (site_visit_id) do nothing;
 
 insert into public.chat_threads (id, name, directors_only)
 values
