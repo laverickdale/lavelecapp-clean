@@ -8,14 +8,12 @@ import type {
   Job,
   Profile,
   Site,
+  SiteFolder,
   SiteImage,
+  SiteJobsheet,
   SiteVisit,
   SiteWithDetails,
 } from "@/lib/types";
-
-function notNull<T>(value: T | null): value is T {
-  return value !== null;
-}
 
 export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
   const supabase = await createClient();
@@ -26,6 +24,8 @@ export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
     sitesResult,
     visitsResult,
     imagesResult,
+    foldersResult,
+    jobsheetsResult,
     jobsResult,
     invoicesResult,
     threadsResult,
@@ -40,11 +40,21 @@ export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
       .order("name"),
     supabase
       .from("site_visits")
-      .select("id, site_id, visit_date, title, visit_type, engineer_name, summary")
+      .select("id, site_id, job_id, visit_date, title, visit_type, engineer_name, summary")
       .order("visit_date", { ascending: false }),
     supabase
       .from("site_images")
       .select("id, site_id, image_url, caption, uploaded_by_name, created_at")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("site_folders")
+      .select("id, site_id, name, slug, is_default, created_by_name, created_at")
+      .order("name"),
+    supabase
+      .from("site_jobsheets")
+      .select(
+        "id, site_id, folder_id, site_visit_id, job_id, title, engineer_name, work_summary, materials_used, follow_up_required, follow_up_notes, client_name, created_at"
+      )
       .order("created_at", { ascending: false }),
     supabase
       .from("jobs")
@@ -61,10 +71,7 @@ export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
       .from("chat_messages")
       .select("id, thread_id, author_name, body, created_at")
       .order("created_at", { ascending: true }),
-    supabase
-      .from("profiles")
-      .select("id, email, full_name, role, created_at")
-      .order("created_at", { ascending: true }),
+    supabase.from("profiles").select("id, email, full_name, role, created_at").order("created_at", { ascending: true }),
   ]);
 
   if (profileResult.error || !profileResult.data) {
@@ -76,6 +83,8 @@ export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
   const sites = (sitesResult.data ?? []) as Site[];
   const visits = (visitsResult.data ?? []) as SiteVisit[];
   const images = (imagesResult.data ?? []) as SiteImage[];
+  const folders = (foldersResult.data ?? []) as SiteFolder[];
+  const jobsheets = (jobsheetsResult.data ?? []) as SiteJobsheet[];
   const jobsRaw = (jobsResult.data ?? []) as Array<Job & { customer_id?: string | null }>;
   const invoicesRaw = (invoicesResult.data ?? []) as Array<Invoice & { customer_id?: string | null }>;
   const threads = (threadsResult.data ?? []) as ChatThread[];
@@ -113,12 +122,12 @@ export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
     customer_name: customerMap.get(site.customer_id ?? "")?.name ?? "Unknown customer",
     visits: visits.filter((visit) => visit.site_id === site.id),
     images: images.filter((image) => image.site_id === site.id),
+    folders: folders.filter((folder) => folder.site_id === site.id),
+    jobsheets: jobsheets.filter((jobsheet) => jobsheet.site_id === site.id),
   }));
 
   const initialMessages = Object.fromEntries(
-    threads
-      .map((thread) => [thread.id, messages.filter((message) => message.thread_id === thread.id)])
-      .filter((entry): entry is [string, ChatMessage[]] => Array.isArray(entry))
+    threads.map((thread) => [thread.id, messages.filter((message) => message.thread_id === thread.id)])
   );
 
   return {
