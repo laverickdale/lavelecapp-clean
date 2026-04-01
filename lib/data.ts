@@ -30,6 +30,7 @@ export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
     invoicesResult,
     threadsResult,
     messagesResult,
+    teamMembersResult,
   ] = await Promise.all([
     supabase.from("profiles").select("id, email, full_name, role").eq("id", userId).single(),
     supabase.from("customers").select("id, name, primary_contact, phone, email, address").order("name"),
@@ -60,6 +61,10 @@ export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
       .from("chat_messages")
       .select("id, thread_id, author_name, body, created_at")
       .order("created_at", { ascending: true }),
+    supabase
+      .from("profiles")
+      .select("id, email, full_name, role, created_at")
+      .order("created_at", { ascending: true }),
   ]);
 
   if (profileResult.error || !profileResult.data) {
@@ -75,6 +80,7 @@ export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
   const invoicesRaw = (invoicesResult.data ?? []) as Array<Invoice & { customer_id?: string | null }>;
   const threads = (threadsResult.data ?? []) as ChatThread[];
   const messages = (messagesResult.data ?? []) as ChatMessage[];
+  const teamMembers = (teamMembersResult.data ?? []) as Profile[];
 
   const customerMap = new Map(customers.map((customer) => [customer.id, customer]));
 
@@ -122,6 +128,7 @@ export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
     jobs,
     invoices,
     threads,
+    teamMembers,
     initialMessages,
   };
 }
