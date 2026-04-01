@@ -62,6 +62,7 @@ export type Job = {
 export type SiteVisit = {
   id: string;
   site_id: string;
+  job_id: string | null;
   visit_date: string;
   title: string;
   visit_type: string;
@@ -75,6 +76,32 @@ export type SiteImage = {
   image_url: string | null;
   caption: string | null;
   uploaded_by_name: string | null;
+  created_at: string;
+};
+
+export type SiteFolder = {
+  id: string;
+  site_id: string;
+  name: string;
+  slug: string;
+  is_default: boolean;
+  created_by_name: string | null;
+  created_at: string;
+};
+
+export type SiteJobsheet = {
+  id: string;
+  site_id: string;
+  folder_id: string;
+  site_visit_id: string | null;
+  job_id: string | null;
+  title: string;
+  engineer_name: string | null;
+  work_summary: string | null;
+  materials_used: string | null;
+  follow_up_required: boolean;
+  follow_up_notes: string | null;
+  client_name: string | null;
   created_at: string;
 };
 
@@ -117,6 +144,8 @@ export type SiteWithDetails = Site & {
   customer_name: string;
   visits: SiteVisit[];
   images: SiteImage[];
+  folders: SiteFolder[];
+  jobsheets: SiteJobsheet[];
 };
 
 export type FieldOpsData = {
@@ -159,3 +188,12 @@ export const STAGE_TONES: Record<WorkflowStage, Tone> = {
   report_complete: "blue",
   invoice_sent: "purple",
 };
+
+export const DEFAULT_SITE_FOLDERS = [
+  { name: "Electrical", slug: "electrical" },
+  { name: "Fire", slug: "fire" },
+  { name: "DBs", slug: "dbs" },
+  { name: "Emergency Lighting", slug: "emergency-lighting" },
+  { name: "Jobsheets", slug: "jobsheets" },
+  { name: "Other", slug: "other" },
+] as const;
