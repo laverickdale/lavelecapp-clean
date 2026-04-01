@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   type ChatMessage,
-  type ChatThread,
   type FieldOpsData,
+  type SiteFolder,
+  type SiteJobsheet,
+  type SiteVisit,
   type Tone,
   type View,
   WORKFLOW_STAGES,
@@ -19,6 +21,16 @@ type CalendarItem = {
   task: string;
   site: string;
   tone: Tone;
+};
+
+type JobsheetDraft = {
+  title: string;
+  jobId: string;
+  workSummary: string;
+  materialsUsed: string;
+  followUpRequired: boolean;
+  followUpNotes: string;
+  clientName: string;
 };
 
 const supabase = createClient();
@@ -37,15 +49,7 @@ function MetricCard({ label, value, hint }: { label: string; value: ReactNode; h
   );
 }
 
-function SectionHead({
-  title,
-  subtitle,
-  action,
-}: {
-  title: string;
-  subtitle: string;
-  action?: ReactNode;
-}) {
+function SectionHead({ title, subtitle, action }: { title: string; subtitle: string; action?: ReactNode }) {
   return (
     <div className="section-head">
       <div>
@@ -86,17 +90,72 @@ function CalendarCard({ day, items }: { day: string; items: CalendarItem[] }) {
   );
 }
 
+function folderTone(slug: string): Tone {
+  switch (slug) {
+    case "electrical":
+      return "blue";
+    case "fire":
+      return "red";
+    case "dbs":
+      return "amber";
+    case "emergency-lighting":
+      return "purple";
+    case "jobsheets":
+      return "green";
+    default:
+      return "slate";
+  }
+}
+
+function folderDescription(slug: string, name: string) {
+  switch (slug) {
+    case "electrical":
+      return "Keep electrical jobs, notes and future uploads grouped together for quick engineer access.";
+    case "fire":
+      return "Use this for fire alarm work, service history and future fire-specific files.";
+    case "dbs":
+      return "A home for distribution board photos, schedules and identification notes.";
+    case "emergency-lighting":
+      return "Store emergency lighting tests, certificates and follow-up items here.";
+    case "jobsheets":
+      return "Jobsheets created in the app file themselves here automatically.";
+    case "other":
+      return "A flexible folder for anything that does not fit the standard structure yet.";
+    default:
+      return `Use ${name} for extra site records that matter to your team.`;
+  }
+}
+
+function createEmptyJobsheetDraft(siteName?: string): JobsheetDraft {
+  return {
+    title: siteName ? `${siteName} visit jobsheet` : "",
+    jobId: "",
+    workSummary: "",
+    materialsUsed: "",
+    followUpRequired: false,
+    followUpNotes: "",
+    clientName: "",
+  };
+}
+
 export default function FieldOpsShell({ initialData }: { initialData: FieldOpsData }) {
   const [view, setView] = useState<View>("dashboard");
   const [search, setSearch] = useState("");
   const [jobs, setJobs] = useState(initialData.jobs);
+  const [sites, setSites] = useState(initialData.sites);
   const [threads] = useState(initialData.threads);
   const [selectedSiteId, setSelectedSiteId] = useState(initialData.sites[0]?.id ?? "");
+  const [selectedFolderId, setSelectedFolderId] = useState("");
   const [selectedThreadId, setSelectedThreadId] = useState(initialData.threads[0]?.id ?? "");
   const [messagesByThread, setMessagesByThread] = useState<Record<string, ChatMessage[]>>(initialData.initialMessages);
   const [messageDraft, setMessageDraft] = useState("");
   const [teamMembers, setTeamMembers] = useState(initialData.teamMembers);
   const [teamSearch, setTeamSearch] = useState("");
+  const [newFolderName, setNewFolderName] = useState("");
+  const [folderError, setFolderError] = useState<string | null>(null);
+  const [folderSuccess, setFolderSuccess] = useState<string | null>(null);
+  const [jobsheetError, setJobsheetError] = useState<string | null>(null);
+  const [jobsheetSuccess, setJobsheetSuccess] = useState<string | null>(null);
   const [teamError, setTeamError] = useState<string | null>(null);
   const [teamSuccess, setTeamSuccess] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
@@ -104,6 +163,11 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
   const [isSending, setIsSending] = useState(false);
   const [isAdvancing, setIsAdvancing] = useState<string | null>(null);
   const [isSavingUserId, setIsSavingUserId] = useState<string | null>(null);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [isSavingJobsheet, setIsSavingJobsheet] = useState(false);
+  const [jobsheetDraft, setJobsheetDraft] = useState<JobsheetDraft>(
+    createEmptyJobsheetDraft(initialData.sites[0]?.name)
+  );
 
   const visibleNav: Array<{ key: View; label: string }> = useMemo(() => {
     const base: Array<{ key: View; label: string }> = [
@@ -151,10 +215,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
     });
   }, [jobs, search]);
 
-  const selectedSite = useMemo(
-    () => initialData.sites.find((site) => site.id === selectedSiteId) ?? initialData.sites[0],
-    [initialData.sites, selectedSiteId]
-  );
+  const selectedSite = useMemo(() => sites.find((site) => site.id === selectedSiteId) ?? sites[0], [sites, selectedSiteId]);
 
   const selectedThread = useMemo(
     () => threads.find((thread) => thread.id === selectedThreadId) ?? threads[0],
@@ -176,12 +237,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
 
     if (!term) return sorted;
 
-    return sorted.filter((member) =>
-      [member.full_name, member.email ?? "", member.role]
-        .join(" ")
-        .toLowerCase()
-        .includes(term)
-    );
+    return sorted.filter((member) => [member.full_name, member.email ?? "", member.role].join(" ").toLowerCase().includes(term));
   }, [initialData.currentUser.id, teamMembers, teamSearch]);
 
   const metrics = useMemo(() => {
@@ -216,7 +272,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
           }).format(date),
           engineer: job.assignee_name ?? "Unassigned",
           task: job.title,
-          site: initialData.sites.find((site) => site.id === job.site_id)?.name ?? job.customer_name,
+          site: sites.find((site) => site.id === job.site_id)?.name ?? job.customer_name,
           tone: stageTone(job.stage),
         };
 
@@ -224,7 +280,89 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
       });
 
     return Array.from(grouped.entries()).map(([label, items]) => ({ label, items })).slice(0, 4);
-  }, [initialData.sites, jobs]);
+  }, [jobs, sites]);
+
+  const selectedSiteJobs = useMemo(
+    () => (selectedSite ? jobs.filter((job) => job.site_id === selectedSite.id) : []),
+    [jobs, selectedSite]
+  );
+
+  const selectedFolder = useMemo(
+    () => selectedSite?.folders.find((folder) => folder.id === selectedFolderId) ?? null,
+    [selectedFolderId, selectedSite]
+  );
+
+  const selectedFolderJobsheets = useMemo(
+    () => (selectedSite && selectedFolder ? selectedSite.jobsheets.filter((jobsheet) => jobsheet.folder_id === selectedFolder.id) : []),
+    [selectedFolder, selectedSite]
+  );
+
+  const folderCounts = useMemo(() => {
+    if (!selectedSite) return new Map<string, number>();
+
+    const counts = new Map<string, number>();
+
+    selectedSite.folders.forEach((folder) => {
+      if (folder.slug === "jobsheets") {
+        counts.set(folder.id, selectedSite.jobsheets.length);
+        return;
+      }
+
+      if (folder.slug === "electrical") {
+        counts.set(folder.id, selectedSiteJobs.filter((job) => job.job_type === "Electrical").length);
+        return;
+      }
+
+      if (folder.slug === "fire") {
+        counts.set(folder.id, selectedSiteJobs.filter((job) => job.job_type === "Fire").length);
+        return;
+      }
+
+      if (folder.slug === "dbs") {
+        counts.set(
+          folder.id,
+          selectedSite.images.filter((image) => /(db|board|panel)/i.test(image.caption ?? "")).length
+        );
+        return;
+      }
+
+      if (folder.slug === "emergency-lighting") {
+        counts.set(
+          folder.id,
+          selectedSiteJobs.filter((job) => /emergency/i.test(`${job.title} ${job.summary ?? ""}`)).length
+        );
+        return;
+      }
+
+      counts.set(folder.id, 0);
+    });
+
+    return counts;
+  }, [selectedSite, selectedSiteJobs]);
+
+  useEffect(() => {
+    if (!selectedSite) return;
+
+    setSelectedFolderId((current) => {
+      if (current && selectedSite.folders.some((folder) => folder.id === current)) {
+        return current;
+      }
+
+      return (
+        selectedSite.folders.find((folder) => folder.slug === "jobsheets")?.id ??
+        selectedSite.folders[0]?.id ??
+        ""
+      );
+    });
+
+    setJobsheetDraft((current) => ({
+      ...current,
+      title:
+        current.title && current.title !== `${selectedSite.name} visit jobsheet`
+          ? current.title
+          : `${selectedSite.name} visit jobsheet`,
+    }));
+  }, [selectedSite]);
 
   async function loadMessages(threadId: string) {
     const { data, error } = await supabase
@@ -305,9 +443,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
   }
 
   function updateTeamDraft(memberId: string, changes: Partial<(typeof teamMembers)[number]>) {
-    setTeamMembers((current) =>
-      current.map((member) => (member.id === memberId ? { ...member, ...changes } : member))
-    );
+    setTeamMembers((current) => current.map((member) => (member.id === memberId ? { ...member, ...changes } : member)));
   }
 
   async function sendMessage() {
@@ -353,6 +489,123 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
     setIsAdvancing(null);
   }
 
+  async function createFolder() {
+    if (!selectedSite || !newFolderName.trim()) return;
+
+    setIsCreatingFolder(true);
+    setFolderError(null);
+    setFolderSuccess(null);
+
+    const response = await fetch("/api/site-folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ siteId: selectedSite.id, name: newFolderName }),
+    });
+
+    const payload = (await response.json()) as { folder?: SiteFolder; error?: string };
+
+    if (!response.ok || !payload.folder) {
+      setFolderError(payload.error ?? "Could not create the folder.");
+      setIsCreatingFolder(false);
+      return;
+    }
+
+    setSites((current) =>
+      current.map((site) =>
+        site.id === selectedSite.id
+          ? { ...site, folders: [...site.folders, payload.folder!].sort((a, b) => a.name.localeCompare(b.name)) }
+          : site
+      )
+    );
+    setSelectedFolderId(payload.folder.id);
+    setNewFolderName("");
+    setFolderSuccess("Folder created.");
+    setIsCreatingFolder(false);
+  }
+
+  async function createJobsheet() {
+    if (!selectedSite) return;
+
+    setIsSavingJobsheet(true);
+    setJobsheetError(null);
+    setJobsheetSuccess(null);
+
+    const response = await fetch("/api/site-jobsheets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        siteId: selectedSite.id,
+        title: jobsheetDraft.title,
+        jobId: jobsheetDraft.jobId || null,
+        workSummary: jobsheetDraft.workSummary,
+        materialsUsed: jobsheetDraft.materialsUsed,
+        followUpRequired: jobsheetDraft.followUpRequired,
+        followUpNotes: jobsheetDraft.followUpNotes,
+        clientName: jobsheetDraft.clientName,
+      }),
+    });
+
+    const payload = (await response.json()) as {
+      jobsheet?: SiteJobsheet;
+      visit?: SiteVisit;
+      error?: string;
+    };
+
+    if (!response.ok || !payload.jobsheet || !payload.visit) {
+      setJobsheetError(payload.error ?? "Could not save the jobsheet.");
+      setIsSavingJobsheet(false);
+      return;
+    }
+
+    setSites((current) =>
+      current.map((site) =>
+        site.id === selectedSite.id
+          ? {
+              ...site,
+              last_visit_at: payload.visit!.visit_date,
+              visits: [payload.visit!, ...site.visits],
+              jobsheets: [payload.jobsheet!, ...site.jobsheets],
+            }
+          : site
+      )
+    );
+
+    setJobsheetSuccess("Jobsheet saved into the Jobsheets folder.");
+    setSelectedFolderId(selectedSite.folders.find((folder) => folder.slug === "jobsheets")?.id ?? selectedFolderId);
+    setJobsheetDraft(createEmptyJobsheetDraft(selectedSite.name));
+    setIsSavingJobsheet(false);
+  }
+
+  const relatedFolderJobs = useMemo(() => {
+    if (!selectedSite || !selectedFolder) return [];
+    if (selectedFolder.slug === "electrical") {
+      return selectedSiteJobs.filter((job) => job.job_type === "Electrical");
+    }
+    if (selectedFolder.slug === "fire") {
+      return selectedSiteJobs.filter((job) => job.job_type === "Fire");
+    }
+    if (selectedFolder.slug === "emergency-lighting") {
+      return selectedSiteJobs.filter((job) => /emergency/i.test(`${job.title} ${job.summary ?? ""}`));
+    }
+    return selectedSiteJobs;
+  }, [selectedFolder, selectedSite, selectedSiteJobs]);
+
+  const relatedFolderVisits = useMemo(() => {
+    if (!selectedSite || !selectedFolder) return [];
+    if (selectedFolder.slug === "jobsheets") {
+      return selectedSite.visits.filter((visit) => visit.visit_type.toLowerCase() === "jobsheet");
+    }
+    if (selectedFolder.slug === "fire") {
+      const fireJobIds = new Set(selectedSiteJobs.filter((job) => job.job_type === "Fire").map((job) => job.id));
+      return selectedSite.visits.filter((visit) => visit.job_id && fireJobIds.has(visit.job_id));
+    }
+    if (selectedFolder.slug === "electrical") {
+      const electricalJobIds = new Set(selectedSiteJobs.filter((job) => job.job_type === "Electrical").map((job) => job.id));
+      return selectedSite.visits.filter((visit) => visit.job_id && electricalJobIds.has(visit.job_id));
+    }
+    return selectedSite.visits.filter((visit) => !visit.job_id);
+  }, [selectedFolder, selectedSite, selectedSiteJobs]);
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -384,12 +637,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
 
         <nav className="nav-list">
           {visibleNav.map((item) => (
-            <button
-              className={`nav-item ${view === item.key ? "active" : ""}`}
-              key={item.key}
-              onClick={() => setView(item.key)}
-              type="button"
-            >
+            <button className={`nav-item ${view === item.key ? "active" : ""}`} key={item.key} onClick={() => setView(item.key)} type="button">
               {item.label}
             </button>
           ))}
@@ -401,7 +649,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
           </p>
           <h3 style={{ marginTop: 10 }}>Built to be used daily</h3>
           <p className="muted-on-dark" style={{ color: "rgba(255,255,255,0.85)" }}>
-            Clean workflow, site history and team chat first. Extra detail can grow later without overwhelming the team.
+            Clean workflow, site history and team chat first. Structured folders and jobsheets now sit inside every site file.
           </p>
         </div>
       </aside>
@@ -413,12 +661,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
             <h2>Run quotes, jobs, sites and chat in one place</h2>
           </div>
           <div className="topbar-actions">
-            <input
-              className="search-input"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search jobs, customers, engineers"
-            />
+            <input className="search-input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search jobs, customers, engineers" />
             <button className="primary-button" onClick={() => setView("workflow")} type="button">
               Open workflow
             </button>
@@ -461,10 +704,10 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                     </div>
                     <div className="item-card">
                       <div className="badge-row">
-                        <Badge tone="blue">{initialData.sites.reduce((total, site) => total + site.visits.length, 0)}</Badge>
+                        <Badge tone="green">{sites.reduce((total, site) => total + site.jobsheets.length, 0)}</Badge>
                       </div>
-                      <p style={{ fontWeight: 700, marginTop: 10 }}>Previous visits on file</p>
-                      <p className="muted" style={{ marginTop: 6 }}>Engineers can open a site and immediately see history, reports and image notes.</p>
+                      <p style={{ fontWeight: 700, marginTop: 10 }}>Jobsheets filed inside sites</p>
+                      <p className="muted" style={{ marginTop: 6 }}>Every saved jobsheet now files itself into the correct site record automatically.</p>
                     </div>
                     <div className="item-card">
                       <div className="badge-row">
@@ -479,9 +722,9 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
 
               <div className="grid-2">
                 <div className="card large-card">
-                  <SectionHead title="Site files" subtitle="Previous visits, jobsheets, reports and photos in one place" action={<button className="secondary-button" onClick={() => setView("sites")} type="button">Open sites</button>} />
+                  <SectionHead title="Site files" subtitle="Folders, visits, jobsheets and photos grouped by site" action={<button className="secondary-button" onClick={() => setView("sites")} type="button">Open sites</button>} />
                   <div className="item-list">
-                    {initialData.sites.slice(0, 3).map((site) => (
+                    {sites.slice(0, 3).map((site) => (
                       <button
                         className="selectable-card"
                         key={site.id}
@@ -494,8 +737,8 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                         <p style={{ fontWeight: 700 }}>{site.name}</p>
                         <p className="muted" style={{ marginTop: 6 }}>{site.customer_name}</p>
                         <div className="badge-row" style={{ marginTop: 10 }}>
-                          <Badge tone="blue">{site.visits.length} visits</Badge>
-                          <Badge tone="purple">{site.images.length} images</Badge>
+                          <Badge tone="green">{site.jobsheets.length} jobsheets</Badge>
+                          <Badge tone="purple">{site.folders.length} folders</Badge>
                         </div>
                       </button>
                     ))}
@@ -513,30 +756,6 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                   </div>
                 </div>
               </div>
-
-              {initialData.currentUser.role === "director" ? (
-                <div className="card large-card">
-                  <SectionHead
-                    title="Team management"
-                    subtitle="Directors can set staff roles without opening Supabase"
-                    action={<button className="secondary-button" onClick={() => setView("team")} type="button">Open team</button>}
-                  />
-                  <div className="grid-3">
-                    <div className="item-card">
-                      <p style={{ fontWeight: 700 }}>Directors</p>
-                      <p className="muted" style={{ marginTop: 6 }}>{teamMembers.filter((member) => member.role === "director").length} account(s)</p>
-                    </div>
-                    <div className="item-card">
-                      <p style={{ fontWeight: 700 }}>Office staff</p>
-                      <p className="muted" style={{ marginTop: 6 }}>{teamMembers.filter((member) => member.role === "office").length} account(s)</p>
-                    </div>
-                    <div className="item-card">
-                      <p style={{ fontWeight: 700 }}>Engineers</p>
-                      <p className="muted" style={{ marginTop: 6 }}>{teamMembers.filter((member) => member.role === "engineer").length} account(s)</p>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
             </div>
           ) : null}
 
@@ -596,12 +815,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                         </div>
                       </div>
                       <div className="button-row" style={{ marginTop: 14 }}>
-                        <button
-                          className="primary-button"
-                          disabled={finalStage || isAdvancing === job.id}
-                          onClick={() => advanceStage(job.id)}
-                          type="button"
-                        >
+                        <button className="primary-button" disabled={finalStage || isAdvancing === job.id} onClick={() => advanceStage(job.id)} type="button">
                           {finalStage ? "Final stage" : isAdvancing === job.id ? "Updating..." : `Move to ${STAGE_LABELS[nextStage(job.stage)]}`}
                         </button>
                       </div>
@@ -617,18 +831,13 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
               <div>
                 <SectionHead title="Site files" subtitle="A running record of every site your team looks after" />
                 <div className="site-picker">
-                  {initialData.sites.map((site) => (
-                    <button
-                      className={`selectable-card ${selectedSite?.id === site.id ? "active" : ""}`}
-                      key={site.id}
-                      onClick={() => setSelectedSiteId(site.id)}
-                      type="button"
-                    >
+                  {sites.map((site) => (
+                    <button className={`selectable-card ${selectedSite?.id === site.id ? "active" : ""}`} key={site.id} onClick={() => setSelectedSiteId(site.id)} type="button">
                       <p style={{ fontWeight: 700 }}>{site.name}</p>
                       <p className="muted" style={{ marginTop: 6 }}>{site.customer_name}</p>
                       <div className="badge-row" style={{ marginTop: 10 }}>
-                        <Badge tone="blue">{site.visits.length} visits</Badge>
-                        <Badge tone="purple">{site.images.length} images</Badge>
+                        <Badge tone="green">{site.jobsheets.length} jobsheets</Badge>
+                        <Badge tone="purple">{site.folders.length} folders</Badge>
                       </div>
                     </button>
                   ))}
@@ -651,65 +860,235 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                           <p style={{ marginTop: 8, fontWeight: 700 }}>{formatDate(selectedSite.next_visit_at, "Not booked")}</p>
                         </div>
                         <div className="small-box">
-                          <p className="kicker">History</p>
-                          <p style={{ marginTop: 8, fontWeight: 700 }}>{selectedSite.visits.length} visits</p>
+                          <p className="kicker">Folders</p>
+                          <p style={{ marginTop: 8, fontWeight: 700 }}>{selectedSite.folders.length} folders</p>
                         </div>
                         <div className="small-box">
-                          <p className="kicker">Images</p>
-                          <p style={{ marginTop: 8, fontWeight: 700 }}>{selectedSite.images.length} items</p>
+                          <p className="kicker">Jobsheets</p>
+                          <p style={{ marginTop: 8, fontWeight: 700 }}>{selectedSite.jobsheets.length} items</p>
                         </div>
+                      </div>
+
+                      {(initialData.currentUser.role === "director" || initialData.currentUser.role === "office") ? (
+                        <div className="folder-builder" style={{ marginTop: 18 }}>
+                          <div>
+                            <p className="kicker">Add a folder</p>
+                            <p className="muted" style={{ marginTop: 6 }}>
+                              Standard folders are already created, but you can add extra folders for this site whenever you need them.
+                            </p>
+                          </div>
+                          <div className="button-row folder-builder-row">
+                            <input className="text-input" value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="Example: Drawings or Access notes" />
+                            <button className="secondary-button" disabled={isCreatingFolder || !newFolderName.trim()} onClick={createFolder} type="button">
+                              {isCreatingFolder ? "Adding..." : "Add folder"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {folderError ? <div className="banner">{folderError}</div> : null}
+                    {folderSuccess ? <div className="banner success-banner">{folderSuccess}</div> : null}
+                    {jobsheetError ? <div className="banner">{jobsheetError}</div> : null}
+                    {jobsheetSuccess ? <div className="banner success-banner">{jobsheetSuccess}</div> : null}
+
+                    <div className="card large-card">
+                      <SectionHead title="Folders" subtitle="Keep each site file tidy as it grows" />
+                      <div className="folder-grid">
+                        {selectedSite.folders.map((folder) => (
+                          <button
+                            className={`folder-card ${selectedFolder?.id === folder.id ? "active" : ""}`}
+                            key={folder.id}
+                            onClick={() => setSelectedFolderId(folder.id)}
+                            type="button"
+                          >
+                            <div className="section-head" style={{ marginBottom: 10 }}>
+                              <div>
+                                <h3>{folder.name}</h3>
+                                <p className="muted" style={{ marginTop: 6 }}>{folder.is_default ? "Standard folder" : "Custom folder"}</p>
+                              </div>
+                              <Badge tone={folderTone(folder.slug)}>{folderCounts.get(folder.id) ?? 0}</Badge>
+                            </div>
+                            <p className="muted">{folderDescription(folder.slug, folder.name)}</p>
+                          </button>
+                        ))}
                       </div>
                     </div>
 
+                    {selectedFolder?.slug === "jobsheets" ? (
+                      <div className="grid-split-wide">
+                        <div className="card large-card">
+                          <SectionHead title="New jobsheet" subtitle="Create a jobsheet inside the app and file it automatically under Jobsheets" action={<Badge tone="green">Auto-filed</Badge>} />
+                          <div className="item-list">
+                            <div>
+                              <label className="kicker" htmlFor="jobsheet-title">Jobsheet title</label>
+                              <input id="jobsheet-title" className="text-input" value={jobsheetDraft.title} onChange={(event) => setJobsheetDraft((current) => ({ ...current, title: event.target.value }))} style={{ marginTop: 8 }} />
+                            </div>
+
+                            <div>
+                              <label className="kicker" htmlFor="jobsheet-job">Linked job</label>
+                              <select id="jobsheet-job" className="text-input" value={jobsheetDraft.jobId} onChange={(event) => setJobsheetDraft((current) => ({ ...current, jobId: event.target.value }))} style={{ marginTop: 8 }}>
+                                <option value="">No linked job</option>
+                                {selectedSiteJobs.map((job) => (
+                                  <option key={job.id} value={job.id}>
+                                    {job.job_number} · {job.title}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="kicker" htmlFor="jobsheet-summary">Work completed</label>
+                              <textarea id="jobsheet-summary" className="textarea" value={jobsheetDraft.workSummary} onChange={(event) => setJobsheetDraft((current) => ({ ...current, workSummary: event.target.value }))} style={{ marginTop: 8 }} />
+                            </div>
+
+                            <div>
+                              <label className="kicker" htmlFor="jobsheet-materials">Materials used</label>
+                              <textarea id="jobsheet-materials" className="textarea compact-textarea" value={jobsheetDraft.materialsUsed} onChange={(event) => setJobsheetDraft((current) => ({ ...current, materialsUsed: event.target.value }))} style={{ marginTop: 8 }} />
+                            </div>
+
+                            <div className="grid-2">
+                              <div>
+                                <label className="kicker" htmlFor="jobsheet-client">Client / contact name</label>
+                                <input id="jobsheet-client" className="text-input" value={jobsheetDraft.clientName} onChange={(event) => setJobsheetDraft((current) => ({ ...current, clientName: event.target.value }))} style={{ marginTop: 8 }} />
+                              </div>
+                              <div className="checkbox-card">
+                                <label className="checkbox-label">
+                                  <input checked={jobsheetDraft.followUpRequired} onChange={(event) => setJobsheetDraft((current) => ({ ...current, followUpRequired: event.target.checked }))} type="checkbox" />
+                                  Follow-up visit required
+                                </label>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="kicker" htmlFor="jobsheet-follow-up">Follow-up notes</label>
+                              <textarea id="jobsheet-follow-up" className="textarea compact-textarea" value={jobsheetDraft.followUpNotes} onChange={(event) => setJobsheetDraft((current) => ({ ...current, followUpNotes: event.target.value }))} style={{ marginTop: 8 }} />
+                            </div>
+
+                            <div className="button-row">
+                              <button className="primary-button" disabled={isSavingJobsheet} onClick={createJobsheet} type="button">
+                                {isSavingJobsheet ? "Saving..." : "Save jobsheet"}
+                              </button>
+                              <span className="muted">This will also add a visit entry to the site history.</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="card large-card">
+                          <SectionHead title="Jobsheets in this folder" subtitle="The newest jobsheets appear here first" action={<Badge tone="green">{selectedFolderJobsheets.length} total</Badge>} />
+                          <div className="item-list">
+                            {selectedFolderJobsheets.length ? (
+                              selectedFolderJobsheets.map((jobsheet) => (
+                                <div className="item-card" key={jobsheet.id}>
+                                  <div className="section-head" style={{ marginBottom: 10 }}>
+                                    <div>
+                                      <h3>{jobsheet.title}</h3>
+                                      <p className="muted" style={{ marginTop: 6 }}>
+                                        {jobsheet.engineer_name ?? "Unknown engineer"} · {formatDateTime(jobsheet.created_at)}
+                                      </p>
+                                    </div>
+                                    <Badge tone={jobsheet.follow_up_required ? "amber" : "green"}>
+                                      {jobsheet.follow_up_required ? "Follow-up needed" : "Complete"}
+                                    </Badge>
+                                  </div>
+                                  <p>{jobsheet.work_summary ?? "No summary added."}</p>
+                                  <div className="badge-row" style={{ marginTop: 12 }}>
+                                    {jobsheet.materials_used ? <Badge tone="slate">Materials logged</Badge> : null}
+                                    {jobsheet.client_name ? <Badge tone="purple">{jobsheet.client_name}</Badge> : null}
+                                  </div>
+                                  {jobsheet.follow_up_notes ? <p className="muted" style={{ marginTop: 12 }}>Follow-up: {jobsheet.follow_up_notes}</p> : null}
+                                </div>
+                              ))
+                            ) : (
+                              <div className="empty-state">No in-app jobsheets yet for this site. Create the first one from the panel beside this list.</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : selectedFolder ? (
+                      <div className="card large-card">
+                        <SectionHead title={selectedFolder.name} subtitle={folderDescription(selectedFolder.slug, selectedFolder.name)} action={<Badge tone={folderTone(selectedFolder.slug)}>{folderCounts.get(selectedFolder.id) ?? 0} linked items</Badge>} />
+                        <div className="grid-2">
+                          <div className="soft-panel">
+                            <p style={{ fontWeight: 700 }}>Related work</p>
+                            <div className="item-list" style={{ marginTop: 12 }}>
+                              {relatedFolderJobs.length ? (
+                                relatedFolderJobs.slice(0, 4).map((job) => (
+                                  <div className="item-card" key={job.id}>
+                                    <p style={{ fontWeight: 700 }}>{job.title}</p>
+                                    <p className="muted" style={{ marginTop: 6 }}>{job.job_number} · {job.customer_name}</p>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="empty-state">No live jobs are currently grouped under this folder.</div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="soft-panel">
+                            <p style={{ fontWeight: 700 }}>Related history</p>
+                            <div className="item-list" style={{ marginTop: 12 }}>
+                              {relatedFolderVisits.length ? (
+                                relatedFolderVisits.slice(0, 4).map((visit) => (
+                                  <div className="item-card" key={visit.id}>
+                                    <p style={{ fontWeight: 700 }}>{visit.title}</p>
+                                    <p className="muted" style={{ marginTop: 6 }}>{visit.visit_type} · {formatDateTime(visit.visit_date)}</p>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="empty-state">This folder is ready to collect files, photos and notes as you build up the site record.</div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
                     <div className="grid-2">
                       <div className="card large-card">
-                        <SectionHead title="Previous visits & jobsheets" subtitle="A clean history engineers can use on site" />
+                        <SectionHead title="Previous visits & reports" subtitle="A clean history engineers can use on site" />
                         <div className="item-list">
                           {selectedSite.visits.length ? (
                             selectedSite.visits.slice(0, 8).map((visit) => (
                               <div className="item-card" key={visit.id}>
-                                <div className="section-head" style={{ marginBottom: 8 }}>
+                                <div className="section-head" style={{ marginBottom: 10 }}>
                                   <div>
-                                    <p style={{ fontWeight: 700 }}>{visit.title}</p>
-                                    <p className="muted" style={{ marginTop: 6 }}>
-                                      {formatDateTime(visit.visit_date)}
-                                    </p>
+                                    <h3>{visit.title}</h3>
+                                    <p className="muted" style={{ marginTop: 6 }}>{formatDateTime(visit.visit_date)}</p>
                                   </div>
-                                  <Badge tone="slate">{visit.visit_type}</Badge>
+                                  <Badge tone={visit.visit_type.toLowerCase() === "jobsheet" ? "green" : "slate"}>{visit.visit_type}</Badge>
                                 </div>
-                                <p className="muted">{visit.summary ?? "No summary saved."}</p>
+                                <p className="muted">{visit.summary ?? "No visit summary saved."}</p>
                               </div>
                             ))
                           ) : (
-                            <div className="empty-state">No visit history saved for this site yet.</div>
+                            <div className="empty-state">No site history yet.</div>
                           )}
                         </div>
                       </div>
 
                       <div className="card large-card">
-                        <SectionHead title="Site images" subtitle="Photos and visual notes attached to the site" />
-                        {selectedSite.images.length ? (
-                          <div className="image-grid">
-                            {selectedSite.images.slice(0, 6).map((image) => (
+                        <SectionHead title="Site images" subtitle="Photos already stored against this site" />
+                        <div className="image-grid">
+                          {selectedSite.images.length ? (
+                            selectedSite.images.slice(0, 6).map((image) => (
                               <div className="soft-panel" key={image.id}>
                                 <div className="image-frame">
-                                  {image.image_url ? <img alt={image.caption ?? "Site image"} src={image.image_url} /> : <span className="muted">No preview</span>}
+                                  {image.image_url ? <img alt={image.caption ?? "Site image"} src={image.image_url} /> : <span className="muted">No image</span>}
                                 </div>
-                                <p style={{ marginTop: 10, fontWeight: 700 }}>{image.caption ?? "Untitled image"}</p>
-                                <p className="muted" style={{ marginTop: 6 }}>
-                                  {image.uploaded_by_name ?? "Unknown"} · {formatDate(image.created_at)}
-                                </p>
+                                <p style={{ fontWeight: 700, marginTop: 10 }}>{image.caption ?? "Untitled image"}</p>
+                                <p className="muted" style={{ marginTop: 6 }}>{image.uploaded_by_name ?? "Unknown"}</p>
                               </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="empty-state">No images saved for this site yet.</div>
-                        )}
+                            ))
+                          ) : (
+                            <div className="empty-state">No images saved for this site yet.</div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </>
                 ) : (
-                  <div className="empty-state">No site records found yet.</div>
+                  <div className="empty-state">No sites have been set up yet.</div>
                 )}
               </div>
             </div>
@@ -721,27 +1100,16 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                 <SectionHead title="Team chat" subtitle="A WhatsApp-style feed that stays inside the app" />
                 <div className="thread-picker">
                   {threads.map((thread) => (
-                    <button
-                      className={`selectable-card ${selectedThread?.id === thread.id ? "active" : ""}`}
-                      key={thread.id}
-                      onClick={() => setSelectedThreadId(thread.id)}
-                      type="button"
-                    >
+                    <button className={`selectable-card ${selectedThread?.id === thread.id ? "active" : ""}`} key={thread.id} onClick={() => setSelectedThreadId(thread.id)} type="button">
                       <p style={{ fontWeight: 700 }}>{thread.name}</p>
-                      <p className="muted" style={{ marginTop: 6 }}>
-                        {thread.directors_only ? "Directors only" : "Visible to the team"}
-                      </p>
+                      <p className="muted" style={{ marginTop: 6 }}>{thread.directors_only ? "Directors only" : "Visible to the team"}</p>
                     </button>
                   ))}
                 </div>
               </div>
 
               <div className="card large-card">
-                <SectionHead
-                  title={selectedThread?.name ?? "Thread"}
-                  subtitle={selectedThread?.directors_only ? "Private director thread" : "Live team conversation"}
-                  action={<Badge tone={selectedThread?.directors_only ? "purple" : "blue"}>{selectedThread?.directors_only ? "Private" : "Live"}</Badge>}
-                />
+                <SectionHead title={selectedThread?.name ?? "Thread"} subtitle="Fast updates, handovers and site notes without leaving the app" action={<Badge tone={selectedThread?.directors_only ? "purple" : "blue"}>{selectedThread?.directors_only ? "Private" : "Live"}</Badge>} />
                 {chatError ? <div className="banner">{chatError}</div> : null}
                 <div className="chat-window">
                   {selectedMessages.length ? (
@@ -758,44 +1126,38 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                       );
                     })
                   ) : (
-                    <div className="empty-state">No messages yet in this thread.</div>
+                    <div className="empty-state">No messages in this thread yet.</div>
                   )}
                 </div>
-                <div className="divider" />
-                <div className="form-stack">
-                  <textarea
-                    className="textarea"
-                    onChange={(event) => setMessageDraft(event.target.value)}
-                    placeholder="Write a message for the team"
-                    value={messageDraft}
-                  />
-                  <div className="button-row">
-                    <button className="primary-button" disabled={isSending} onClick={sendMessage} type="button">
-                      {isSending ? "Sending..." : "Send message"}
-                    </button>
-                  </div>
+
+                <div className="button-row" style={{ marginTop: 16 }}>
+                  <input className="text-input" value={messageDraft} onChange={(event) => setMessageDraft(event.target.value)} placeholder="Write a message" />
+                  <button className="primary-button" disabled={isSending || !messageDraft.trim()} onClick={sendMessage} type="button">
+                    {isSending ? "Sending..." : "Send"}
+                  </button>
                 </div>
               </div>
             </div>
           ) : null}
 
           {view === "customers" ? (
-            <div className="card large-card">
-              <SectionHead title="Customers" subtitle="A simple CRM layer without crowding the core screens" />
-              <div className="grid-3">
-                {initialData.customers.map((customer) => (
-                  <div className="item-card" key={customer.id}>
-                    <h3>{customer.name}</h3>
-                    <p className="muted" style={{ marginTop: 6 }}>{customer.primary_contact ?? "No primary contact"}</p>
-                    <div className="divider" />
-                    <div className="item-list">
-                      <p className="muted">Phone: {customer.phone ?? "Not added"}</p>
-                      <p className="muted">Email: {customer.email ?? "Not added"}</p>
-                      <p className="muted">Address: {customer.address ?? "Not added"}</p>
+            <div className="grid-3">
+              {initialData.customers.map((customer) => (
+                <div className="card large-card" key={customer.id}>
+                  <div className="section-head">
+                    <div>
+                      <h3>{customer.name}</h3>
+                      <p className="muted" style={{ marginTop: 6 }}>{customer.primary_contact ?? "No contact saved"}</p>
                     </div>
+                    <Badge tone="blue">{sites.filter((site) => site.customer_name === customer.name).length} sites</Badge>
                   </div>
-                ))}
-              </div>
+                  <div className="item-list">
+                    <p className="muted">{customer.phone ?? "No phone number"}</p>
+                    <p className="muted">{customer.email ?? "No email address"}</p>
+                    <p className="muted">{customer.address ?? "No address"}</p>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : null}
 
@@ -831,7 +1193,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                 <div className="item-list">
                   <div className="item-card">
                     <p style={{ fontWeight: 700 }}>Electrical certificates</p>
-                    <p className="muted" style={{ marginTop: 6 }}>Use the workflow and site visit history to attach future EIC, EICR and minor works records.</p>
+                    <p className="muted" style={{ marginTop: 6 }}>Use the workflow and site history to attach future EIC, EICR and minor works records.</p>
                   </div>
                   <div className="item-card">
                     <p style={{ fontWeight: 700 }}>Fire reporting</p>
@@ -844,12 +1206,12 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                 <SectionHead title="Worth adding next" subtitle="Practical future enhancements" />
                 <div className="item-list">
                   <div className="item-card">
-                    <p style={{ fontWeight: 700 }}>Site image uploads</p>
-                    <p className="muted" style={{ marginTop: 6 }}>Add Supabase Storage when you want engineers to capture photos directly in the app.</p>
+                    <p style={{ fontWeight: 700 }}>Photo uploads into folders</p>
+                    <p className="muted" style={{ marginTop: 6 }}>The folder structure is now live, so photo uploads can be the next clean step.</p>
                   </div>
                   <div className="item-card">
-                    <p style={{ fontWeight: 700 }}>Reminders & expiry dates</p>
-                    <p className="muted" style={{ marginTop: 6 }}>Vehicle, calibration and compliance reminders can layer in later without changing the clean main flow.</p>
+                    <p style={{ fontWeight: 700 }}>Jotform sync if needed later</p>
+                    <p className="muted" style={{ marginTop: 6 }}>You can keep using the in-app jobsheet builder now and add Jotform pull-through later only if it still adds value.</p>
                   </div>
                 </div>
               </div>
@@ -860,11 +1222,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
             initialData.currentUser.role === "director" ? (
               <div className="item-list">
                 <div className="card large-card">
-                  <SectionHead
-                    title="Team management"
-                    subtitle="Directors can rename users and switch them between director, office and engineer"
-                    action={<Badge tone="purple">Director only</Badge>}
-                  />
+                  <SectionHead title="Team management" subtitle="Directors can rename users and switch them between director, office and engineer" action={<Badge tone="purple">Director only</Badge>} />
                   <div className="grid-split-wide">
                     <div className="soft-panel">
                       <p style={{ fontWeight: 700 }}>How to use this</p>
@@ -886,14 +1244,10 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                 </div>
 
                 <div className="card large-card">
-                  <SectionHead
-                    title="All staff"
-                    subtitle="Search by name, email or role"
-                    action={<input className="search-input" value={teamSearch} onChange={(event) => setTeamSearch(event.target.value)} placeholder="Search team members" />}
-                  />
+                  <SectionHead title="All staff" subtitle="Search by name, email or role" action={<input className="search-input" value={teamSearch} onChange={(event) => setTeamSearch(event.target.value)} placeholder="Search team members" />} />
 
                   {teamError ? <div className="banner">{teamError}</div> : null}
-                  {teamSuccess ? <div className="banner" style={{ background: "var(--green-bg)", color: "var(--green-text)" }}>{teamSuccess}</div> : null}
+                  {teamSuccess ? <div className="banner success-banner">{teamSuccess}</div> : null}
 
                   <div className="item-list" style={{ marginTop: 16 }}>
                     {filteredTeamMembers.map((member) => {
@@ -907,33 +1261,18 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                               <h3>{isCurrentUser ? `${member.full_name} (you)` : member.full_name}</h3>
                               <p className="muted" style={{ marginTop: 6 }}>{member.email ?? "No email saved"}</p>
                             </div>
-                            <Badge tone={member.role === "director" ? "purple" : member.role === "office" ? "blue" : "green"}>
-                              {member.role}
-                            </Badge>
+                            <Badge tone={member.role === "director" ? "purple" : member.role === "office" ? "blue" : "green"}>{member.role}</Badge>
                           </div>
 
                           <div className="grid-2">
                             <div>
                               <label className="kicker" htmlFor={`name-${member.id}`}>Full name</label>
-                              <input
-                                className="text-input"
-                                id={`name-${member.id}`}
-                                value={member.full_name}
-                                onChange={(event) => updateTeamDraft(member.id, { full_name: event.target.value })}
-                                style={{ marginTop: 8 }}
-                              />
+                              <input className="text-input" id={`name-${member.id}`} value={member.full_name} onChange={(event) => updateTeamDraft(member.id, { full_name: event.target.value })} style={{ marginTop: 8 }} />
                             </div>
 
                             <div>
                               <label className="kicker" htmlFor={`role-${member.id}`}>Role</label>
-                              <select
-                                className="text-input"
-                                disabled={isCurrentUser}
-                                id={`role-${member.id}`}
-                                onChange={(event) => updateTeamDraft(member.id, { role: event.target.value as "director" | "office" | "engineer" })}
-                                style={{ marginTop: 8 }}
-                                value={member.role}
-                              >
+                              <select className="text-input" disabled={isCurrentUser} id={`role-${member.id}`} onChange={(event) => updateTeamDraft(member.id, { role: event.target.value as "director" | "office" | "engineer" })} style={{ marginTop: 8 }} value={member.role}>
                                 <option value="director">director</option>
                                 <option value="office">office</option>
                                 <option value="engineer">engineer</option>
@@ -942,19 +1281,10 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                           </div>
 
                           <div className="button-row" style={{ marginTop: 14 }}>
-                            <button
-                              className="primary-button"
-                              disabled={saveDisabled}
-                              onClick={() => saveTeamMember(member.id, { full_name: member.full_name, role: member.role })}
-                              type="button"
-                            >
+                            <button className="primary-button" disabled={saveDisabled} onClick={() => saveTeamMember(member.id, { full_name: member.full_name, role: member.role })} type="button">
                               {isSavingUserId === member.id ? "Saving..." : "Save changes"}
                             </button>
-                            {isCurrentUser ? (
-                              <span className="muted">Your own role is locked here for safety.</span>
-                            ) : (
-                              <span className="muted">Use role changes here instead of jumping into Supabase.</span>
-                            )}
+                            {isCurrentUser ? <span className="muted">Your own role is locked here for safety.</span> : <span className="muted">Use role changes here instead of jumping into Supabase.</span>}
                           </div>
                         </div>
                       );
@@ -978,29 +1308,32 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                   </div>
                   <div className="item-card">
                     <p style={{ fontWeight: 700 }}>Client archive</p>
-                    <p className="muted" style={{ marginTop: 6 }}>Use Microsoft Graph later if you want actual OneDrive browsing from inside the app.</p>
+                    <p className="muted" style={{ marginTop: 6 }}>Keep the higher-level business file structure here while operational site records stay in the cleaner day-to-day views.</p>
                   </div>
                 </div>
               </div>
 
               <div className="card large-card">
-                <SectionHead title="Why this is separate" subtitle="Keeps the everyday app simple for the wider team" />
-                <div className="empty-state">
-                  This section is intentionally light in the deployable package. The role-based gate is real, while the Graph integration is the next safe extension.
+                <SectionHead title="What this area is for" subtitle="Keep the live app simple for the wider team" />
+                <div className="item-list">
+                  <div className="item-card">
+                    <p style={{ fontWeight: 700 }}>OneDrive integration later</p>
+                    <p className="muted" style={{ marginTop: 6 }}>The role structure is already in place, so secure director-only file links can plug into this area later.</p>
+                  </div>
                 </div>
               </div>
             </div>
           ) : null}
         </div>
-
-        <nav className="mobile-nav">
-          {mobileTabs.map((tab) => (
-            <button className={view === tab.key ? "active" : ""} key={tab.key} onClick={() => setView(tab.key)} type="button">
-              {tab.label}
-            </button>
-          ))}
-        </nav>
       </section>
+
+      <nav className="mobile-nav">
+        {mobileTabs.map((tab) => (
+          <button className={`nav-item ${view === tab.key ? "active" : ""}`} key={tab.key} onClick={() => setView(tab.key)} type="button">
+            {tab.label}
+          </button>
+        ))}
+      </nav>
     </main>
   );
 }
