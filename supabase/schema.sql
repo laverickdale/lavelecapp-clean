@@ -98,6 +98,33 @@ create table if not exists public.site_images (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.site_folders (
+  id uuid primary key default gen_random_uuid(),
+  site_id uuid not null references public.sites(id) on delete cascade,
+  name text not null,
+  slug text not null,
+  is_default boolean not null default false,
+  created_by_name text,
+  created_at timestamptz not null default now(),
+  unique (site_id, slug)
+);
+
+create table if not exists public.site_jobsheets (
+  id uuid primary key default gen_random_uuid(),
+  site_id uuid not null references public.sites(id) on delete cascade,
+  folder_id uuid not null references public.site_folders(id) on delete cascade,
+  site_visit_id uuid unique references public.site_visits(id) on delete set null,
+  job_id uuid references public.jobs(id) on delete set null,
+  title text not null,
+  engineer_name text,
+  work_summary text,
+  materials_used text,
+  follow_up_required boolean not null default false,
+  follow_up_notes text,
+  client_name text,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.chat_threads (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
@@ -179,12 +206,50 @@ as $$
   select coalesce((select role from public.profiles where id = auth.uid()), 'engineer'::public.app_role)
 $$;
 
+create or replace function public.create_default_site_folders(target_site_id uuid, creator_name text default 'System')
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.site_folders (site_id, name, slug, is_default, created_by_name)
+  values
+    (target_site_id, 'Electrical', 'electrical', true, creator_name),
+    (target_site_id, 'Fire', 'fire', true, creator_name),
+    (target_site_id, 'DBs', 'dbs', true, creator_name),
+    (target_site_id, 'Emergency Lighting', 'emergency-lighting', true, creator_name),
+    (target_site_id, 'Jobsheets', 'jobsheets', true, creator_name),
+    (target_site_id, 'Other', 'other', true, creator_name)
+  on conflict (site_id, slug) do nothing;
+end;
+$$;
+
+create or replace function public.handle_new_site()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform public.create_default_site_folders(new.id, 'System');
+  return new;
+end;
+$$;
+
+drop trigger if exists create_site_default_folders on public.sites;
+create trigger create_site_default_folders
+after insert on public.sites
+for each row execute procedure public.handle_new_site();
+
 alter table public.profiles enable row level security;
 alter table public.customers enable row level security;
 alter table public.sites enable row level security;
 alter table public.jobs enable row level security;
 alter table public.site_visits enable row level security;
 alter table public.site_images enable row level security;
+alter table public.site_folders enable row level security;
+alter table public.site_jobsheets enable row level security;
 alter table public.chat_threads enable row level security;
 alter table public.chat_messages enable row level security;
 alter table public.invoices enable row level security;
@@ -281,6 +346,38 @@ with check (auth.role() = 'authenticated');
 drop policy if exists "site images updatable by office and directors" on public.site_images;
 create policy "site images updatable by office and directors"
 on public.site_images
+for update
+using (public.current_role() in ('office', 'director'))
+with check (public.current_role() in ('office', 'director'));
+
+drop policy if exists "site folders readable by authenticated users" on public.site_folders;
+create policy "site folders readable by authenticated users"
+on public.site_folders
+for select
+using (auth.role() = 'authenticated');
+
+drop policy if exists "site folders writable by office and directors" on public.site_folders;
+create policy "site folders writable by office and directors"
+on public.site_folders
+for all
+using (public.current_role() in ('office', 'director'))
+with check (public.current_role() in ('office', 'director'));
+
+drop policy if exists "site jobsheets readable by authenticated users" on public.site_jobsheets;
+create policy "site jobsheets readable by authenticated users"
+on public.site_jobsheets
+for select
+using (auth.role() = 'authenticated');
+
+drop policy if exists "site jobsheets insertable by authenticated users" on public.site_jobsheets;
+create policy "site jobsheets insertable by authenticated users"
+on public.site_jobsheets
+for insert
+with check (auth.role() = 'authenticated');
+
+drop policy if exists "site jobsheets updatable by office and directors" on public.site_jobsheets;
+create policy "site jobsheets updatable by office and directors"
+on public.site_jobsheets
 for update
 using (public.current_role() in ('office', 'director'))
 with check (public.current_role() in ('office', 'director'));
