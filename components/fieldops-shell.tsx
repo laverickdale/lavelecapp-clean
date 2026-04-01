@@ -610,10 +610,11 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-card">
-          <div className="brand-mark">⚡</div>
+          <img alt="Lavelec logo" className="brand-logo" src="/branding/lavelec-orb.png" />
           <div>
-            <p className="eyebrow">FieldOps Pro</p>
-            <h1>Electrical Ops</h1>
+            <p className="eyebrow accent-eyebrow">Lavelec</p>
+            <h1>Lavelec Ops</h1>
+            <p className="brand-subtitle">Electrical + fire systems</p>
           </div>
         </div>
 
@@ -631,7 +632,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
             </Badge>
           </div>
           <p className="muted-on-dark">
-            Engineers see site files, diary and chat. Office staff unlock invoices and workflow controls. Directors also see the secure OneDrive area.
+            Engineers get site files, jobsheets and diary access. Office staff unlock workflow and admin controls. Directors also see the secure OneDrive area.
           </p>
         </div>
 
@@ -649,7 +650,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
           </p>
           <h3 style={{ marginTop: 10 }}>Built to be used daily</h3>
           <p className="muted-on-dark" style={{ color: "rgba(255,255,255,0.85)" }}>
-            Clean workflow, site history and team chat first. Structured folders and jobsheets now sit inside every site file.
+            Premium branding outside, calm workflow inside. Built to feel familiar to the Lavelec team from the first login.
           </p>
         </div>
       </aside>
@@ -657,8 +658,8 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
       <section className="content-shell">
         <header className="topbar">
           <div>
-            <p className="muted">Field service control centre</p>
-            <h2>Run quotes, jobs, sites and chat in one place</h2>
+            <p className="muted">Lavelec control centre</p>
+            <h2>Run electrical, fire and site records in one place</h2>
           </div>
           <div className="topbar-actions">
             <input className="search-input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search jobs, customers, engineers" />
