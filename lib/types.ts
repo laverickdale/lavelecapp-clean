@@ -8,6 +8,7 @@ export type View =
   | "customers"
   | "invoices"
   | "compliance"
+  | "team"
   | "onedrive";
 
 export type Tone = "slate" | "blue" | "green" | "amber" | "red" | "purple";
@@ -32,6 +33,7 @@ export type Profile = {
   email: string | null;
   full_name: string;
   role: AppRole;
+  created_at?: string;
 };
 
 export type Customer = {
@@ -124,6 +126,7 @@ export type FieldOpsData = {
   sites: SiteWithDetails[];
   invoices: Invoice[];
   threads: ChatThread[];
+  teamMembers: Profile[];
   initialMessages: Record<string, ChatMessage[]>;
 };
 
