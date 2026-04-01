@@ -95,10 +95,15 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
   const [selectedThreadId, setSelectedThreadId] = useState(initialData.threads[0]?.id ?? "");
   const [messagesByThread, setMessagesByThread] = useState<Record<string, ChatMessage[]>>(initialData.initialMessages);
   const [messageDraft, setMessageDraft] = useState("");
+  const [teamMembers, setTeamMembers] = useState(initialData.teamMembers);
+  const [teamSearch, setTeamSearch] = useState("");
+  const [teamError, setTeamError] = useState<string | null>(null);
+  const [teamSuccess, setTeamSuccess] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isAdvancing, setIsAdvancing] = useState<string | null>(null);
+  const [isSavingUserId, setIsSavingUserId] = useState<string | null>(null);
 
   const visibleNav: Array<{ key: View; label: string }> = useMemo(() => {
     const base: Array<{ key: View; label: string }> = [
@@ -116,6 +121,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
     }
 
     if (initialData.currentUser.role === "director") {
+      base.push({ key: "team", label: "Team" });
       base.push({ key: "onedrive", label: "Directors only" });
     }
 
@@ -159,6 +165,24 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
     if (!selectedThreadId) return [];
     return messagesByThread[selectedThreadId] ?? [];
   }, [messagesByThread, selectedThreadId]);
+
+  const filteredTeamMembers = useMemo(() => {
+    const term = teamSearch.toLowerCase().trim();
+    const sorted = [...teamMembers].sort((a, b) => {
+      if (a.id === initialData.currentUser.id) return -1;
+      if (b.id === initialData.currentUser.id) return 1;
+      return a.full_name.localeCompare(b.full_name);
+    });
+
+    if (!term) return sorted;
+
+    return sorted.filter((member) =>
+      [member.full_name, member.email ?? "", member.role]
+        .join(" ")
+        .toLowerCase()
+        .includes(term)
+    );
+  }, [initialData.currentUser.id, teamMembers, teamSearch]);
 
   const metrics = useMemo(() => {
     const openQuotes = jobs.filter((job) => job.stage === "quote_sent").length;
@@ -250,6 +274,41 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
       void supabase.removeChannel(channel);
     };
   }, [selectedThreadId]);
+
+  async function saveTeamMember(memberId: string, updates: { full_name: string; role: "director" | "office" | "engineer" }) {
+    setIsSavingUserId(memberId);
+    setTeamError(null);
+    setTeamSuccess(null);
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({
+        full_name: updates.full_name.trim() || "New user",
+        role: updates.role,
+      })
+      .eq("id", memberId)
+      .select("id, email, full_name, role, created_at")
+      .single();
+
+    if (error || !data) {
+      setTeamError(error?.message ?? "Could not save this team member.");
+      setIsSavingUserId(null);
+      return;
+    }
+
+    setTeamMembers((current) =>
+      current.map((member) => (member.id === memberId ? { ...member, ...(data as typeof member) } : member))
+    );
+
+    setTeamSuccess("Team member updated.");
+    setIsSavingUserId(null);
+  }
+
+  function updateTeamDraft(memberId: string, changes: Partial<(typeof teamMembers)[number]>) {
+    setTeamMembers((current) =>
+      current.map((member) => (member.id === memberId ? { ...member, ...changes } : member))
+    );
+  }
 
   async function sendMessage() {
     const body = messageDraft.trim();
@@ -454,6 +513,30 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                   </div>
                 </div>
               </div>
+
+              {initialData.currentUser.role === "director" ? (
+                <div className="card large-card">
+                  <SectionHead
+                    title="Team management"
+                    subtitle="Directors can set staff roles without opening Supabase"
+                    action={<button className="secondary-button" onClick={() => setView("team")} type="button">Open team</button>}
+                  />
+                  <div className="grid-3">
+                    <div className="item-card">
+                      <p style={{ fontWeight: 700 }}>Directors</p>
+                      <p className="muted" style={{ marginTop: 6 }}>{teamMembers.filter((member) => member.role === "director").length} account(s)</p>
+                    </div>
+                    <div className="item-card">
+                      <p style={{ fontWeight: 700 }}>Office staff</p>
+                      <p className="muted" style={{ marginTop: 6 }}>{teamMembers.filter((member) => member.role === "office").length} account(s)</p>
+                    </div>
+                    <div className="item-card">
+                      <p style={{ fontWeight: 700 }}>Engineers</p>
+                      <p className="muted" style={{ marginTop: 6 }}>{teamMembers.filter((member) => member.role === "engineer").length} account(s)</p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -771,6 +854,117 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                 </div>
               </div>
             </div>
+          ) : null}
+
+          {view === "team" ? (
+            initialData.currentUser.role === "director" ? (
+              <div className="item-list">
+                <div className="card large-card">
+                  <SectionHead
+                    title="Team management"
+                    subtitle="Directors can rename users and switch them between director, office and engineer"
+                    action={<Badge tone="purple">Director only</Badge>}
+                  />
+                  <div className="grid-split-wide">
+                    <div className="soft-panel">
+                      <p style={{ fontWeight: 700 }}>How to use this</p>
+                      <div className="item-list" style={{ marginTop: 12 }}>
+                        <p className="muted">New staff create their own account from the login screen.</p>
+                        <p className="muted">Then you come here and switch them to director, office or engineer.</p>
+                        <p className="muted">Your own role is locked here so you cannot accidentally remove director access.</p>
+                      </div>
+                    </div>
+                    <div className="soft-panel">
+                      <p style={{ fontWeight: 700 }}>Quick totals</p>
+                      <div className="badge-row" style={{ marginTop: 12 }}>
+                        <Badge tone="purple">{teamMembers.filter((member) => member.role === "director").length} directors</Badge>
+                        <Badge tone="blue">{teamMembers.filter((member) => member.role === "office").length} office</Badge>
+                        <Badge tone="green">{teamMembers.filter((member) => member.role === "engineer").length} engineers</Badge>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card large-card">
+                  <SectionHead
+                    title="All staff"
+                    subtitle="Search by name, email or role"
+                    action={<input className="search-input" value={teamSearch} onChange={(event) => setTeamSearch(event.target.value)} placeholder="Search team members" />}
+                  />
+
+                  {teamError ? <div className="banner">{teamError}</div> : null}
+                  {teamSuccess ? <div className="banner" style={{ background: "var(--green-bg)", color: "var(--green-text)" }}>{teamSuccess}</div> : null}
+
+                  <div className="item-list" style={{ marginTop: 16 }}>
+                    {filteredTeamMembers.map((member) => {
+                      const isCurrentUser = member.id === initialData.currentUser.id;
+                      const saveDisabled = isSavingUserId === member.id || !member.full_name.trim();
+
+                      return (
+                        <div className="item-card" key={member.id}>
+                          <div className="section-head">
+                            <div>
+                              <h3>{isCurrentUser ? `${member.full_name} (you)` : member.full_name}</h3>
+                              <p className="muted" style={{ marginTop: 6 }}>{member.email ?? "No email saved"}</p>
+                            </div>
+                            <Badge tone={member.role === "director" ? "purple" : member.role === "office" ? "blue" : "green"}>
+                              {member.role}
+                            </Badge>
+                          </div>
+
+                          <div className="grid-2">
+                            <div>
+                              <label className="kicker" htmlFor={`name-${member.id}`}>Full name</label>
+                              <input
+                                className="text-input"
+                                id={`name-${member.id}`}
+                                value={member.full_name}
+                                onChange={(event) => updateTeamDraft(member.id, { full_name: event.target.value })}
+                                style={{ marginTop: 8 }}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="kicker" htmlFor={`role-${member.id}`}>Role</label>
+                              <select
+                                className="text-input"
+                                disabled={isCurrentUser}
+                                id={`role-${member.id}`}
+                                onChange={(event) => updateTeamDraft(member.id, { role: event.target.value as "director" | "office" | "engineer" })}
+                                style={{ marginTop: 8 }}
+                                value={member.role}
+                              >
+                                <option value="director">director</option>
+                                <option value="office">office</option>
+                                <option value="engineer">engineer</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="button-row" style={{ marginTop: 14 }}>
+                            <button
+                              className="primary-button"
+                              disabled={saveDisabled}
+                              onClick={() => saveTeamMember(member.id, { full_name: member.full_name, role: member.role })}
+                              type="button"
+                            >
+                              {isSavingUserId === member.id ? "Saving..." : "Save changes"}
+                            </button>
+                            {isCurrentUser ? (
+                              <span className="muted">Your own role is locked here for safety.</span>
+                            ) : (
+                              <span className="muted">Use role changes here instead of jumping into Supabase.</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="empty-state">This area is for directors only.</div>
+            )
           ) : null}
 
           {view === "onedrive" ? (
