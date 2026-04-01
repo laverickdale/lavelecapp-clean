@@ -9,36 +9,40 @@ export default async function LoginPage({
 
   return (
     <main className="auth-shell">
-      <div className="auth-card">
-        <section className="auth-panel">
-          <p className="eyebrow">FieldOps Pro</p>
-          <h1 style={{ marginTop: 12, fontSize: "2rem", lineHeight: 1.05 }}>A calm operating system for your electrical business</h1>
-          <p className="muted-on-dark" style={{ marginTop: 16 }}>
-            Built for directors, office staff and engineers who want clear workflow, clean site files, easy chat,
-            and less overwhelm.
+      <div className="auth-card branded-auth-card">
+        <section className="auth-panel branded-auth-panel">
+          <div className="login-brand-lockup">
+            <img alt="Lavelec logo" className="login-brand-logo" src="/branding/lavelec-orb.png" />
+            <div>
+              <p className="eyebrow accent-eyebrow">Lavelec</p>
+              <h1 style={{ marginTop: 10, fontSize: "2.2rem", lineHeight: 1.02 }}>Calm control for electrical and fire operations</h1>
+            </div>
+          </div>
+          <p className="muted-on-dark login-intro" style={{ marginTop: 18 }}>
+            Built around your brand: dark premium shell, clean workspace, clear workflow and site files that feel easy to use every day.
           </p>
-          <div className="divider" />
+          <div className="divider branded-divider" />
           <div className="item-list">
-            <div className="soft-panel" style={{ background: "rgba(255,255,255,0.08)", color: "white" }}>
-              <strong>Easy diary</strong>
-              <p className="muted-on-dark">A calmer calendar that highlights visits without turning into a spreadsheet.</p>
+            <div className="soft-panel auth-feature-card">
+              <strong>Branded for Lavelec</strong>
+              <p className="muted-on-dark">Black shell, amber highlights and your circular identity carried through the whole app.</p>
             </div>
-            <div className="soft-panel" style={{ background: "rgba(255,255,255,0.08)", color: "white" }}>
-              <strong>Site files</strong>
-              <p className="muted-on-dark">Previous visits, jobsheets and site images stay attached to the site.</p>
+            <div className="soft-panel auth-feature-card">
+              <strong>Site folders & jobsheets</strong>
+              <p className="muted-on-dark">Structured site files for electrical, fire, DBs and jobsheets with room to grow.</p>
             </div>
-            <div className="soft-panel" style={{ background: "rgba(255,255,255,0.08)", color: "white" }}>
-              <strong>Simple workflow</strong>
-              <p className="muted-on-dark">Quote sent, accepted, PO received, materials ordered, booked, completed and invoiced.</p>
+            <div className="soft-panel auth-feature-card">
+              <strong>Built for daily use</strong>
+              <p className="muted-on-dark">Engineers, office staff and directors each get the right view without clutter.</p>
             </div>
           </div>
         </section>
 
-        <section className="auth-form">
-          <p className="eyebrow">Sign in</p>
-          <h2 style={{ marginTop: 10, fontSize: "1.8rem" }}>Get your team into the app</h2>
+        <section className="auth-form branded-auth-form">
+          <p className="eyebrow accent-eyebrow">Sign in</p>
+          <h2 style={{ marginTop: 10, fontSize: "1.8rem" }}>Welcome to Lavelec Ops</h2>
           <p className="muted" style={{ marginTop: 8 }}>
-            Use email and password first. The package is ready for Supabase roles and can be extended later with Microsoft login.
+            Use email and password first. The app is ready for Supabase roles and can be extended later with Microsoft login.
           </p>
 
           {params.message ? <div className="banner">{params.message}</div> : null}
@@ -51,10 +55,10 @@ export default async function LoginPage({
             <label htmlFor="password">Password</label>
             <input className="text-input" id="password" name="password" type="password" required placeholder="At least 8 characters" />
             <div className="button-row" style={{ marginTop: 8 }}>
-              <button className="primary-button" formAction={login}>
+              <button type="submit" className="primary-button" formAction={login}>
                 Log in
               </button>
-              <button className="secondary-button" formAction={signup}>
+              <button type="submit" className="secondary-button" formAction={signup}>
                 Create account
               </button>
             </div>
