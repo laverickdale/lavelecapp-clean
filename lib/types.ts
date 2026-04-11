@@ -70,11 +70,18 @@ export type SiteVisit = {
   summary: string | null;
 };
 
+export type SiteImageTag = "general" | "before" | "after" | "issue" | "complete";
+
 export type SiteImage = {
   id: string;
   site_id: string;
+  folder_id: string | null;
+  jobsheet_id: string | null;
   image_url: string | null;
   caption: string | null;
+  tag: SiteImageTag | null;
+  file_name: string | null;
+  storage_path: string | null;
   uploaded_by_name: string | null;
   created_at: string;
 };
