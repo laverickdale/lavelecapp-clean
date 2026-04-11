@@ -210,6 +210,11 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
     createEmptyJobsheetDraft(initialData.sites[0]?.name)
   );
 
+  const openJobsheetPdf = (jobsheetId: string) => {
+    if (typeof window === "undefined") return;
+    window.open(`/api/site-jobsheets/${jobsheetId}/pdf`, "_blank", "noopener,noreferrer");
+  };
+
   const visibleNav: Array<{ key: View; label: string }> = useMemo(() => {
     const base: Array<{ key: View; label: string }> = [
       { key: "dashboard", label: "Dashboard" },
@@ -1189,9 +1194,14 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                                         {jobsheet.engineer_name ?? "Unknown engineer"} · {formatDateTime(jobsheet.created_at)}
                                       </p>
                                     </div>
-                                    <Badge tone={jobsheet.follow_up_required ? "amber" : "green"}>
-                                      {jobsheet.follow_up_required ? "Follow-up needed" : "Complete"}
-                                    </Badge>
+                                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                      <Badge tone={jobsheet.follow_up_required ? "amber" : "green"}>
+                                        {jobsheet.follow_up_required ? "Follow-up needed" : "Complete"}
+                                      </Badge>
+                                      <button className="secondary-button" onClick={() => openJobsheetPdf(jobsheet.id)} type="button">
+                                        Export PDF
+                                      </button>
+                                    </div>
                                   </div>
                                   <p>{jobsheet.work_summary ?? "No summary added."}</p>
                                   <div className="badge-row" style={{ marginTop: 12 }}>
