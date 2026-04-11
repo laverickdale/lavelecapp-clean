@@ -44,7 +44,7 @@ export async function loadFieldOpsData(userId: string): Promise<FieldOpsData> {
       .order("visit_date", { ascending: false }),
     supabase
       .from("site_images")
-      .select("id, site_id, image_url, caption, uploaded_by_name, created_at")
+      .select("id, site_id, folder_id, jobsheet_id, image_url, caption, tag, file_name, storage_path, uploaded_by_name, created_at")
       .order("created_at", { ascending: false }),
     supabase
       .from("site_folders")
