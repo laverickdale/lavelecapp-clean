@@ -6,6 +6,8 @@ import {
   type ChatMessage,
   type FieldOpsData,
   type SiteFolder,
+  type SiteImage,
+  type SiteImageTag,
   type SiteJobsheet,
   type SiteVisit,
   type Tone,
@@ -32,6 +34,16 @@ type JobsheetDraft = {
   followUpNotes: string;
   clientName: string;
 };
+
+type PhotoTagOption = { value: SiteImageTag; label: string };
+
+const PHOTO_TAGS: PhotoTagOption[] = [
+  { value: "general", label: "General" },
+  { value: "before", label: "Before" },
+  { value: "after", label: "After" },
+  { value: "issue", label: "Issue" },
+  { value: "complete", label: "Complete" },
+];
 
 const supabase = createClient();
 
@@ -118,11 +130,33 @@ function folderDescription(slug: string, name: string) {
     case "emergency-lighting":
       return "Store emergency lighting tests, certificates and follow-up items here.";
     case "jobsheets":
-      return "Jobsheets created in the app file themselves here automatically.";
+      return "Jobsheets created in the app file themselves here automatically, and related photos can be linked here too.";
     case "other":
       return "A flexible folder for anything that does not fit the standard structure yet.";
     default:
       return `Use ${name} for extra site records that matter to your team.`;
+  }
+}
+
+function createSafeFileName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9.]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function photoTagTone(tag: string | null | undefined): Tone {
+  switch (tag) {
+    case "before":
+      return "amber";
+    case "after":
+    case "complete":
+      return "green";
+    case "issue":
+      return "red";
+    default:
+      return "blue";
   }
 }
 
@@ -152,8 +186,14 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
   const [teamMembers, setTeamMembers] = useState(initialData.teamMembers);
   const [teamSearch, setTeamSearch] = useState("");
   const [newFolderName, setNewFolderName] = useState("");
+  const [photoCaption, setPhotoCaption] = useState("");
+  const [photoTag, setPhotoTag] = useState<SiteImageTag>("general");
+  const [photoJobsheetId, setPhotoJobsheetId] = useState("");
+  const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const [folderError, setFolderError] = useState<string | null>(null);
   const [folderSuccess, setFolderSuccess] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [photoSuccess, setPhotoSuccess] = useState<string | null>(null);
   const [jobsheetError, setJobsheetError] = useState<string | null>(null);
   const [jobsheetSuccess, setJobsheetSuccess] = useState<string | null>(null);
   const [teamError, setTeamError] = useState<string | null>(null);
@@ -164,6 +204,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
   const [isAdvancing, setIsAdvancing] = useState<string | null>(null);
   const [isSavingUserId, setIsSavingUserId] = useState<string | null>(null);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isSavingJobsheet, setIsSavingJobsheet] = useState(false);
   const [jobsheetDraft, setJobsheetDraft] = useState<JobsheetDraft>(
     createEmptyJobsheetDraft(initialData.sites[0]?.name)
@@ -297,48 +338,32 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
     [selectedFolder, selectedSite]
   );
 
+  const selectedFolderImages = useMemo(
+    () =>
+      selectedSite && selectedFolder
+        ? selectedSite.images.filter((image) => image.folder_id === selectedFolder.id)
+        : [],
+    [selectedFolder, selectedSite]
+  );
+
   const folderCounts = useMemo(() => {
     if (!selectedSite) return new Map<string, number>();
 
     const counts = new Map<string, number>();
 
     selectedSite.folders.forEach((folder) => {
+      const imageCount = selectedSite.images.filter((image) => image.folder_id === folder.id).length;
+
       if (folder.slug === "jobsheets") {
-        counts.set(folder.id, selectedSite.jobsheets.length);
+        counts.set(folder.id, selectedSite.jobsheets.length + imageCount);
         return;
       }
 
-      if (folder.slug === "electrical") {
-        counts.set(folder.id, selectedSiteJobs.filter((job) => job.job_type === "Electrical").length);
-        return;
-      }
-
-      if (folder.slug === "fire") {
-        counts.set(folder.id, selectedSiteJobs.filter((job) => job.job_type === "Fire").length);
-        return;
-      }
-
-      if (folder.slug === "dbs") {
-        counts.set(
-          folder.id,
-          selectedSite.images.filter((image) => /(db|board|panel)/i.test(image.caption ?? "")).length
-        );
-        return;
-      }
-
-      if (folder.slug === "emergency-lighting") {
-        counts.set(
-          folder.id,
-          selectedSiteJobs.filter((job) => /emergency/i.test(`${job.title} ${job.summary ?? ""}`)).length
-        );
-        return;
-      }
-
-      counts.set(folder.id, 0);
+      counts.set(folder.id, imageCount);
     });
 
     return counts;
-  }, [selectedSite, selectedSiteJobs]);
+  }, [selectedSite]);
 
   useEffect(() => {
     if (!selectedSite) return;
@@ -363,6 +388,15 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
           : `${selectedSite.name} visit jobsheet`,
     }));
   }, [selectedSite]);
+
+  useEffect(() => {
+    setPhotoError(null);
+    setPhotoSuccess(null);
+    setPhotoCaption("");
+    setPhotoTag("general");
+    setPhotoJobsheetId("");
+    setSelectedPhotoFile(null);
+  }, [selectedFolderId, selectedSiteId]);
 
   async function loadMessages(threadId: string) {
     const { data, error } = await supabase
@@ -576,6 +610,68 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
     setIsSavingJobsheet(false);
   }
 
+  async function uploadPhoto() {
+    if (!selectedSite || !selectedFolder || !selectedPhotoFile) return;
+
+    setIsUploadingPhoto(true);
+    setPhotoError(null);
+    setPhotoSuccess(null);
+
+    const safeName = createSafeFileName(selectedPhotoFile.name || `site-photo-${Date.now()}.jpg`);
+    const storagePath = `${selectedSite.id}/${selectedFolder.slug}/${Date.now()}-${safeName}`;
+
+    const uploadResult = await supabase.storage.from("site-files").upload(storagePath, selectedPhotoFile, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: selectedPhotoFile.type || undefined,
+    });
+
+    if (uploadResult.error) {
+      setPhotoError(uploadResult.error.message);
+      setIsUploadingPhoto(false);
+      return;
+    }
+
+    const { data: publicUrlData } = supabase.storage.from("site-files").getPublicUrl(storagePath);
+
+    const { data, error } = await supabase
+      .from("site_images")
+      .insert({
+        site_id: selectedSite.id,
+        folder_id: selectedFolder.id,
+        jobsheet_id: selectedFolder.slug === "jobsheets" ? photoJobsheetId || null : null,
+        image_url: publicUrlData.publicUrl,
+        caption: photoCaption.trim() || selectedPhotoFile.name,
+        tag: photoTag,
+        file_name: selectedPhotoFile.name,
+        storage_path: storagePath,
+        uploaded_by_name: initialData.currentUser.full_name,
+      })
+      .select("id, site_id, folder_id, jobsheet_id, image_url, caption, tag, file_name, storage_path, uploaded_by_name, created_at")
+      .single();
+
+    if (error || !data) {
+      setPhotoError(error?.message ?? "Could not save the photo record.");
+      setIsUploadingPhoto(false);
+      return;
+    }
+
+    setSites((current) =>
+      current.map((site) =>
+        site.id === selectedSite.id
+          ? { ...site, images: [data as SiteImage, ...site.images] }
+          : site
+      )
+    );
+
+    setPhotoSuccess(`Photo added to ${selectedFolder.name}.`);
+    setPhotoCaption("");
+    setPhotoTag("general");
+    setPhotoJobsheetId("");
+    setSelectedPhotoFile(null);
+    setIsUploadingPhoto(false);
+  }
+
   const relatedFolderJobs = useMemo(() => {
     if (!selectedSite || !selectedFolder) return [];
     if (selectedFolder.slug === "electrical") {
@@ -606,14 +702,27 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
     return selectedSite.visits.filter((visit) => !visit.job_id);
   }, [selectedFolder, selectedSite, selectedSiteJobs]);
 
+  const jobsheetPhotoCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (!selectedSite) return counts;
+
+    selectedSite.images.forEach((image) => {
+      if (!image.jobsheet_id) return;
+      counts.set(image.jobsheet_id, (counts.get(image.jobsheet_id) ?? 0) + 1);
+    });
+
+    return counts;
+  }, [selectedSite]);
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-card">
-          <div className="brand-mark">⚡</div>
+          <img alt="Lavelec logo" className="brand-logo" src="/branding/lavelec-orb.png" />
           <div>
-            <p className="eyebrow">FieldOps Pro</p>
-            <h1>Electrical Ops</h1>
+            <p className="eyebrow accent-eyebrow">Lavelec</p>
+            <h1>Lavelec Ops</h1>
+            <p className="brand-subtitle">Electrical + fire systems</p>
           </div>
         </div>
 
@@ -631,7 +740,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
             </Badge>
           </div>
           <p className="muted-on-dark">
-            Engineers see site files, diary and chat. Office staff unlock invoices and workflow controls. Directors also see the secure OneDrive area.
+            Engineers get site files, jobsheets and diary access. Office staff unlock workflow and admin controls. Directors also see the secure OneDrive area.
           </p>
         </div>
 
@@ -649,7 +758,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
           </p>
           <h3 style={{ marginTop: 10 }}>Built to be used daily</h3>
           <p className="muted-on-dark" style={{ color: "rgba(255,255,255,0.85)" }}>
-            Clean workflow, site history and team chat first. Structured folders and jobsheets now sit inside every site file.
+            Premium branding outside, calm workflow inside. Built to feel familiar to the Lavelec team from the first login.
           </p>
         </div>
       </aside>
@@ -657,8 +766,8 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
       <section className="content-shell">
         <header className="topbar">
           <div>
-            <p className="muted">Field service control centre</p>
-            <h2>Run quotes, jobs, sites and chat in one place</h2>
+            <p className="muted">Lavelec control centre</p>
+            <h2>Run electrical, fire and site records in one place</h2>
           </div>
           <div className="topbar-actions">
             <input className="search-input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search jobs, customers, engineers" />
@@ -889,6 +998,8 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
 
                     {folderError ? <div className="banner">{folderError}</div> : null}
                     {folderSuccess ? <div className="banner success-banner">{folderSuccess}</div> : null}
+                    {photoError ? <div className="banner">{photoError}</div> : null}
+                    {photoSuccess ? <div className="banner success-banner">{photoSuccess}</div> : null}
                     {jobsheetError ? <div className="banner">{jobsheetError}</div> : null}
                     {jobsheetSuccess ? <div className="banner success-banner">{jobsheetSuccess}</div> : null}
 
@@ -914,6 +1025,97 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                         ))}
                       </div>
                     </div>
+
+                    {selectedFolder ? (
+                      <div className="card large-card">
+                        <SectionHead
+                          title={`Upload photos to ${selectedFolder.name}`}
+                          subtitle="Add visual records from phone or desktop and file them straight into the selected folder."
+                          action={<Badge tone={folderTone(selectedFolder.slug)}>{selectedFolderImages.length} saved</Badge>}
+                        />
+                        <div className="grid-2">
+                          <div className="item-list">
+                            <div>
+                              <label className="kicker" htmlFor="site-photo-file">Choose image</label>
+                              <input
+                                id="site-photo-file"
+                                accept="image/*"
+                                className="file-input"
+                                onChange={(event) => setSelectedPhotoFile(event.target.files?.[0] ?? null)}
+                                style={{ marginTop: 8 }}
+                                type="file"
+                              />
+                              <p className="muted" style={{ marginTop: 8 }}>
+                                {selectedPhotoFile ? selectedPhotoFile.name : "Pick a photo from your phone or laptop."}
+                              </p>
+                            </div>
+
+                            <div>
+                              <label className="kicker" htmlFor="site-photo-caption">Caption</label>
+                              <input
+                                id="site-photo-caption"
+                                className="text-input"
+                                onChange={(event) => setPhotoCaption(event.target.value)}
+                                placeholder="Example: Panel before remedials"
+                                style={{ marginTop: 8 }}
+                                value={photoCaption}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="item-list">
+                            <div>
+                              <label className="kicker" htmlFor="site-photo-tag">Photo tag</label>
+                              <select
+                                id="site-photo-tag"
+                                className="text-input"
+                                onChange={(event) => setPhotoTag(event.target.value as SiteImageTag)}
+                                style={{ marginTop: 8 }}
+                                value={photoTag}
+                              >
+                                {PHOTO_TAGS.map((tag) => (
+                                  <option key={tag.value} value={tag.value}>
+                                    {tag.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {selectedFolder.slug === "jobsheets" ? (
+                              <div>
+                                <label className="kicker" htmlFor="site-photo-jobsheet">Link to jobsheet</label>
+                                <select
+                                  id="site-photo-jobsheet"
+                                  className="text-input"
+                                  onChange={(event) => setPhotoJobsheetId(event.target.value)}
+                                  style={{ marginTop: 8 }}
+                                  value={photoJobsheetId}
+                                >
+                                  <option value="">No linked jobsheet</option>
+                                  {selectedSite.jobsheets.map((jobsheet) => (
+                                    <option key={jobsheet.id} value={jobsheet.id}>
+                                      {jobsheet.title}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : null}
+
+                            <div className="button-row">
+                              <button
+                                className="primary-button"
+                                disabled={isUploadingPhoto || !selectedPhotoFile}
+                                onClick={uploadPhoto}
+                                type="button"
+                              >
+                                {isUploadingPhoto ? "Uploading..." : "Upload photo"}
+                              </button>
+                              <span className="muted">Photos are filed to this folder immediately.</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
 
                     {selectedFolder?.slug === "jobsheets" ? (
                       <div className="grid-split-wide">
@@ -995,6 +1197,7 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                                   <div className="badge-row" style={{ marginTop: 12 }}>
                                     {jobsheet.materials_used ? <Badge tone="slate">Materials logged</Badge> : null}
                                     {jobsheet.client_name ? <Badge tone="purple">{jobsheet.client_name}</Badge> : null}
+                                    {(jobsheetPhotoCounts.get(jobsheet.id) ?? 0) > 0 ? <Badge tone="blue">{jobsheetPhotoCounts.get(jobsheet.id) ?? 0} photo{(jobsheetPhotoCounts.get(jobsheet.id) ?? 0) === 1 ? "" : "s"}</Badge> : null}
                                   </div>
                                   {jobsheet.follow_up_notes ? <p className="muted" style={{ marginTop: 12 }}>Follow-up: {jobsheet.follow_up_notes}</p> : null}
                                 </div>
@@ -1044,6 +1247,37 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                       </div>
                     ) : null}
 
+                    {selectedFolder ? (
+                      <div className="card large-card">
+                        <SectionHead
+                          title={`${selectedFolder.name} photos`}
+                          subtitle="The newest uploaded images for this folder appear first."
+                          action={<Badge tone={folderTone(selectedFolder.slug)}>{selectedFolderImages.length} total</Badge>}
+                        />
+                        <div className="image-grid">
+                          {selectedFolderImages.length ? (
+                            selectedFolderImages.slice(0, 8).map((image) => (
+                              <div className="soft-panel" key={image.id}>
+                                <div className="image-frame">
+                                  {image.image_url ? <img alt={image.caption ?? "Site image"} src={image.image_url} /> : <span className="muted">No image</span>}
+                                </div>
+                                <div className="badge-row" style={{ marginTop: 10 }}>
+                                  <Badge tone={photoTagTone(image.tag)}>{image.tag ?? "general"}</Badge>
+                                  {image.jobsheet_id ? <Badge tone="green">Linked jobsheet</Badge> : null}
+                                </div>
+                                <p style={{ fontWeight: 700, marginTop: 10 }}>{image.caption ?? image.file_name ?? "Untitled image"}</p>
+                                <p className="muted" style={{ marginTop: 6 }}>
+                                  {image.uploaded_by_name ?? "Unknown"} · {formatDateTime(image.created_at)}
+                                </p>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="empty-state">No photos have been uploaded to this folder yet.</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+
                     <div className="grid-2">
                       <div className="card large-card">
                         <SectionHead title="Previous visits & reports" subtitle="A clean history engineers can use on site" />
@@ -1068,18 +1302,27 @@ export default function FieldOpsShell({ initialData }: { initialData: FieldOpsDa
                       </div>
 
                       <div className="card large-card">
-                        <SectionHead title="Site images" subtitle="Photos already stored against this site" />
+                        <SectionHead title="Site images" subtitle="Latest photos across all folders for this site" action={<Badge tone="blue">{selectedSite.images.length} total</Badge>} />
                         <div className="image-grid">
                           {selectedSite.images.length ? (
-                            selectedSite.images.slice(0, 6).map((image) => (
-                              <div className="soft-panel" key={image.id}>
-                                <div className="image-frame">
-                                  {image.image_url ? <img alt={image.caption ?? "Site image"} src={image.image_url} /> : <span className="muted">No image</span>}
+                            selectedSite.images.slice(0, 6).map((image) => {
+                              const imageFolder = selectedSite.folders.find((folder) => folder.id === image.folder_id);
+                              return (
+                                <div className="soft-panel" key={image.id}>
+                                  <div className="image-frame">
+                                    {image.image_url ? <img alt={image.caption ?? "Site image"} src={image.image_url} /> : <span className="muted">No image</span>}
+                                  </div>
+                                  <div className="badge-row" style={{ marginTop: 10 }}>
+                                    {imageFolder ? <Badge tone={folderTone(imageFolder.slug)}>{imageFolder.name}</Badge> : null}
+                                    <Badge tone={photoTagTone(image.tag)}>{image.tag ?? "general"}</Badge>
+                                  </div>
+                                  <p style={{ fontWeight: 700, marginTop: 10 }}>{image.caption ?? image.file_name ?? "Untitled image"}</p>
+                                  <p className="muted" style={{ marginTop: 6 }}>
+                                    {image.uploaded_by_name ?? "Unknown"} · {formatDateTime(image.created_at)}
+                                  </p>
                                 </div>
-                                <p style={{ fontWeight: 700, marginTop: 10 }}>{image.caption ?? "Untitled image"}</p>
-                                <p className="muted" style={{ marginTop: 6 }}>{image.uploaded_by_name ?? "Unknown"}</p>
-                              </div>
-                            ))
+                              );
+                            })
                           ) : (
                             <div className="empty-state">No images saved for this site yet.</div>
                           )}
